@@ -10,6 +10,9 @@ A helyi változat (`LocalStorage`) próbafuttatáshoz és teszthez való.
 
 from __future__ import annotations
 
+import atexit
+import hashlib
+import os
 import time
 from pathlib import Path
 from typing import Protocol
@@ -44,11 +47,25 @@ class SupabaseStorage:
     RETRY_STATUS = frozenset({429, 500, 502, 503, 504})
     RETRIES = 4
 
-    def __init__(self, url: str, secret_key: str, timeout: float = 60) -> None:
+    def __init__(self, url: str, secret_key: str, timeout: float = 60, cache_dir: Path | None = None) -> None:
         self.base = f"{url.rstrip('/')}/storage/v1"
         self.session = requests.Session()
         self.session.headers.update({"apikey": secret_key, "Authorization": f"Bearer {secret_key}"})
         self.timeout = timeout
+        # Futáson belüli lemez-gyorsítótár (`docs/terv-egress.md`, J1): a job
+        # lépései (mutatók, becslés, kiértékelés, megjelenítés) ugyanazt az
+        # árfolyamot olvassák; így egyszer jön le. Csak az ideiglenes gépen él:
+        # futások között nincs cache, mert a publikus repó cache-éből egy idegen
+        # pull request a licencelt nyers adatot is visszaolvashatná.
+        env = os.environ.get("CALYZE_STORAGE_CACHE")
+        self.cache_dir = cache_dir if cache_dir is not None else (Path(env) if env else None)
+        self.traffic = Traffic()
+        atexit.register(self.traffic.report)
+
+    def _cached(self, bucket: str, path: str) -> Path | None:
+        if self.cache_dir is None:
+            return None
+        return self.cache_dir / bucket / path
 
     def _request(self, method: str, url: str, **kwargs: object) -> requests.Response:
         """Kérés újrapróbálással az átmeneti hibákra.
@@ -116,10 +133,19 @@ class SupabaseStorage:
             )
 
     def download(self, bucket: str, path: str) -> bytes | None:
+        local = self._cached(bucket, path)
+        if local is not None and local.exists():
+            self.traffic.cache_hits += 1
+            return local.read_bytes()
         r = self._request("GET", f"{self.base}/object/{bucket}/{path}")
         if self._not_found(r):
             return None
         self._check(r, f"letöltés ({path})")
+        self.traffic.downloads += 1
+        self.traffic.download_bytes += len(r.content)
+        if local is not None:
+            local.parent.mkdir(parents=True, exist_ok=True)
+            local.write_bytes(r.content)
         return r.content
 
     #: A Supabase ingyenes sávján a feltöltés fájlonkénti felső határa.
@@ -131,6 +157,12 @@ class SupabaseStorage:
                 f"feltöltés ({path}): {len(data) / 1048576:.0f} MB, a határ "
                 f"{self.MAX_UPLOAD_BYTES // 1048576} MB — bontsd kisebb fájlokra vagy összesíts"
             )
+        local = self._cached(bucket, path)
+        # Ha ebben a futásban már letöltöttük, és bitre azonos, nem írjuk újra:
+        # a napi újrapróbák így nem írják felül ugyanazt a partíciót.
+        if local is not None and local.exists() and _digest(local.read_bytes()) == _digest(data):
+            self.traffic.uploads_skipped += 1
+            return
         r = self._request(
             "POST",
             f"{self.base}/object/{bucket}/{path}",
@@ -138,6 +170,14 @@ class SupabaseStorage:
             headers={"Content-Type": content_type, "x-upsert": "true", "cache-control": "no-store"},
         )
         self._check(r, f"feltöltés ({path})")
+        from pipeline.runstate import record_change
+
+        record_change(bucket, path)
+        self.traffic.uploads += 1
+        self.traffic.upload_bytes += len(data)
+        if local is not None:
+            local.parent.mkdir(parents=True, exist_ok=True)
+            local.write_bytes(data)
 
     def list(self, bucket: str, prefix: str) -> list[str]:
         r = self.session.post(
@@ -147,6 +187,34 @@ class SupabaseStorage:
         )
         self._check(r, f"listázás ({prefix})")
         return [f"{prefix.rstrip('/')}/{item['name']}" for item in r.json() if item.get("id")]
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+class Traffic:
+    """A tároló-forgalom számlálói egy folyamatra (J7). A naplóba csak szám kerül."""
+
+    def __init__(self) -> None:
+        self.downloads = 0
+        self.download_bytes = 0
+        self.cache_hits = 0
+        self.uploads = 0
+        self.upload_bytes = 0
+        self.uploads_skipped = 0
+
+    def report(self) -> None:
+        if self.downloads or self.uploads or self.cache_hits or self.uploads_skipped:
+            log.info(
+                "storage_traffic",
+                downloads=self.downloads,
+                download_mb=round(self.download_bytes / 1048576, 1),
+                cache_hits=self.cache_hits,
+                uploads=self.uploads,
+                upload_mb=round(self.upload_bytes / 1048576, 1),
+                uploads_skipped=self.uploads_skipped,
+            )
 
 
 class LocalStorage:

@@ -94,6 +94,12 @@ def package_path(session: date) -> str:
     return f"{FORECAST_PREFIX}/{session.year}/{session.isoformat()}.parquet"
 
 
+def package_exists(storage: Storage, session: date) -> bool:
+    """Van-e már csomag a napra, letöltés nélkül (a mappa listájából; J2)."""
+    path = package_path(session)
+    return path in set(storage.list(RAW_BUCKET, path.rsplit("/", 1)[0]))
+
+
 def build_forecasts(
     features: pd.DataFrame,
     prices: pd.DataFrame,
@@ -390,6 +396,12 @@ def run(storage: Storage, now: datetime, dry_run: bool = False) -> dict[str, obj
     # mert nincs rá elég adat. A korai kilépés egy percnyi számítást spórolt
     # volna, cserébe egy rossz napra nézett volna rá.
 
+    # Ha viszont a naptár szerinti napra már van csomag, nincs mit választani:
+    # a napi újrapróbák így az árfolyam letöltése nélkül lépnek ki (J2).
+    if package_exists(storage, expected):
+        log.info("forecast_already_saved", session=str(expected))
+        return {"session": str(expected), "status": "already_saved"}
+
     universe = active_on(load_universe(), now.astimezone(UTC).date())
     years = list(range(expected.year - LOOKBACK_YEARS + 1, expected.year + 1))
     prices = _load_prices(storage, years)
@@ -408,7 +420,7 @@ def run(storage: Storage, now: datetime, dry_run: bool = False) -> dict[str, obj
     coverage = features.groupby("date")["instrument_id"].nunique().to_dict()
     session = choose_session(coverage, expected, len(universe))
 
-    if storage.download(RAW_BUCKET, package_path(session)) is not None:
+    if package_exists(storage, session):
         log.info("forecast_already_saved", session=str(session))
         return {"session": str(session), "status": "already_saved"}
 

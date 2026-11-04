@@ -29,125 +29,71 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  arena:
-    if: ${{ inputs.scope != 'crypto' && inputs.scope != 'fx' && inputs.scope != 'bonds' && inputs.scope != 'practice' }}
+  # Egyetlen job, sorban (docs/terv-egress.md a privát repóban): a lépések a
+  # gép lemezén közösen használják a letöltött árfolyamot, így a 20 év egyszer
+  # jön le, nem nyolcszor. A sorrend nem számít; egy lépés hibája után a
+  # többi még lefut (a job a végén hibásként jelez).
+  weekly:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - run: uv sync --frozen --no-dev
-      - name: A teljes aréna-mérés
+      - name: Futáson belüli tároló-gyorsítótár és változásnapló (docs/terv-egress.md, J1–J2)
+        # Csak az ideiglenes gépen él: futások között nincs cache, mert a publikus
+        # repó cache-éből egy idegen pull request a nyers adatot is visszaolvashatná.
+        run: |
+          echo "CALYZE_STORAGE_CACHE=$RUNNER_TEMP/storage-cache" >> "$GITHUB_ENV"
+          echo "CALYZE_CHANGES_FILE=$RUNNER_TEMP/changes.txt" >> "$GITHUB_ENV"
+      - name: A teljes indikátor-aréna
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.scope == 'all') }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: uv run python -m pipeline.arena.run $DRY_RUN
-
-  # A minta-aréna (spec/03 3.3): támasz-ellenállás, gyertyaminták,
-  # váll-fej-váll. Független az indikátor-arénától, ezért mellette fut.
-  patterns:
-    if: ${{ inputs.scope != 'crypto' && inputs.scope != 'fx' && inputs.scope != 'bonds' && inputs.scope != 'practice' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - run: uv sync --frozen --no-dev
-      - name: A teljes minta-mérés
+      - name: Minta-aréna (támasz-ellenállás, gyertyaminták, váll-fej-váll)
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.scope == 'all') }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: uv run python -m pipeline.patterns.run $DRY_RUN
-
-  # A konfluencia-motor (docs/konfluencia.md): kiváltó × kontextus-kombinációk,
-  # felfedezés 2018 végéig, megerősítés 2019-től. A naplóba csak darabszám kerül.
-  confluence:
-    if: ${{ inputs.scope != 'crypto' && inputs.scope != 'fx' && inputs.scope != 'bonds' && inputs.scope != 'practice' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 300
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - run: uv sync --frozen --no-dev
-      - name: A teljes konfluencia-mérés
+      - name: Konfluencia-motor
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.scope == 'all') }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: uv run python -m pipeline.confluence.run $DRY_RUN
-
-  # A hír-aréna (docs/hir-arena.md): a sokk- és naptári jelzések pontossága a
-  # realizált volatilitáson. Élő 2026-09-26-tól, előtte backtest, külön.
-  news:
-    if: ${{ inputs.scope != 'crypto' && inputs.scope != 'fx' && inputs.scope != 'bonds' && inputs.scope != 'practice' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - run: uv sync --frozen --no-dev
-      - name: A hír-aréna mérése
+      - name: Hír-aréna
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.scope == 'all') }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: uv run python -m pipeline.newsarena.run $DRY_RUN
-  crypto:
-    if: ${{ inputs.scope != 'fx' && inputs.scope != 'bonds' && inputs.scope != 'practice' }}
-    # A kripto-arénák (docs/kripto-arenak.md): saját korrekciós családban, a
-    # crypto/ megjelenítési mappába. A részvényes jobokkal nem függ össze.
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - run: uv sync --frozen --no-dev
       - name: Kripto indikátor-, minta- és hír-aréna
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.scope == 'all' || inputs.scope == 'crypto') }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: uv run python -m pipeline.crypto.arenas
-  fx:
-    if: ${{ inputs.scope != 'crypto' && inputs.scope != 'bonds' && inputs.scope != 'practice' }}
-    # A deviza-arénák (docs/fx-arenak.md): saját családban, az fx/ mappába.
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - run: uv sync --frozen --no-dev
       - name: Deviza indikátor-, minta- és hír-aréna
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.scope == 'all' || inputs.scope == 'fx') }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: uv run python -m pipeline.fx.arenas
-  bonds:
-    if: ${{ inputs.scope != 'crypto' && inputs.scope != 'fx' && inputs.scope != 'practice' }}
-    # A kötvény-arénák (docs/kotveny.md, 7.): saját családban, a bonds/ mappába.
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - run: uv sync --frozen --no-dev
       - name: Kötvény indikátor-, minta- és hír-aréna
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.scope == 'all' || inputs.scope == 'bonds') }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: uv run python -m pipeline.bonds.arenas
-
-  practice:
-    # A kalibrációs edzés vak kérdésbankja: múltbeli ablakok, név és dátum nélkül.
-    if: ${{ inputs.scope == 'practice' || inputs.scope == 'all' || github.event_name == 'schedule' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-      - run: uv sync --frozen --no-dev
-      - name: Kérdésbank
+      - name: Kalibrációs edzés (kérdésbank)
+        if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.scope == 'all' || inputs.scope == 'practice') }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}

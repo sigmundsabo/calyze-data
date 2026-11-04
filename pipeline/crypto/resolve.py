@@ -152,7 +152,11 @@ def main(argv: list[str] | None = None, spec: AssetSpec | None = None) -> int:
     else:
         log.error("storage_not_configured")
         return 2
-    print(json.dumps(run(storage, datetime.now(UTC), journal, spec), indent=2, default=str))
+    from pipeline.runstate import gated
+
+    spec = spec or crypto_spec()
+    result = gated(storage, f"resolve-{spec.name}", lambda: run(storage, datetime.now(UTC), journal, spec))
+    print(json.dumps(result if result is not None else {"status": "skipped"}, indent=2, default=str))
     return 0
 
 

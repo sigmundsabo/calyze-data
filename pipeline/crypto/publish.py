@@ -187,8 +187,16 @@ def run(
     if dry_run:
         return {"files": len(files), "status": "dry_run"}
     storage.ensure_private_bucket(DISPLAY_BUCKET)
-    for path, blob, content_type in files:
-        storage.upload(DISPLAY_BUCKET, path, blob, content_type)
+    from pipeline.publish.manifest import ChangedOnly
+
+    # Eszközosztályonként saját manifeszt: a futások párhuzamosan írnak, és
+    # egy közös fájlt felülírnák egymásnak.
+    uploader = ChangedOnly(storage, DISPLAY_BUCKET, f"{prefix}/.manifest.json")
+    try:
+        for path, blob, content_type in files:
+            uploader.put(path, blob, content_type)
+    finally:
+        uploader.finish()
     log.info("asset_publish_done", asset=spec.name, files=len(files), day=day)
     return {"files": len(files), "day": day, "status": "published"}
 
@@ -207,7 +215,13 @@ def main(argv: list[str] | None = None, spec: AssetSpec | None = None) -> int:
             log.error("storage_not_configured")
             return 2
         storage = SupabaseStorage(settings.supabase_url, settings.supabase_secret_key)
-    print(json.dumps(run(storage, datetime.now(UTC), args.dry_run, spec), indent=2, default=str))
+    from pipeline.runstate import gated
+
+    spec = spec or crypto_spec()
+    result = gated(
+        storage, f"publish-{spec.name}", lambda: run(storage, datetime.now(UTC), args.dry_run, spec)
+    )
+    print(json.dumps(result if result is not None else {"status": "skipped"}, indent=2, default=str))
     return 0
 
 

@@ -34,6 +34,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - run: uv sync --frozen --no-dev
+      - name: Futáson belüli tároló-gyorsítótár és változásnapló (docs/terv-egress.md, J1–J2)
+        # Csak az ideiglenes gépen él: futások között nincs cache, mert a publikus
+        # repó cache-éből egy idegen pull request a nyers adatot is visszaolvashatná.
+        run: |
+          echo "CALYZE_STORAGE_CACHE=$RUNNER_TEMP/storage-cache" >> "$GITHUB_ENV"
+          echo "CALYZE_CHANGES_FILE=$RUNNER_TEMP/changes.txt" >> "$GITHUB_ENV"
       - name: Letöltés (EKB)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

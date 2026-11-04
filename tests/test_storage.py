@@ -153,3 +153,71 @@ def test_a_tartos_idotullepes_vegul_hibat_dob(monkeypatch) -> None:
     monkeypatch.setattr(storage.session, "request", dead)
     with pytest.raises(requests.exceptions.ConnectTimeout):
         storage.download("bucket", "path.parquet")
+
+
+class Counting:
+    """A `_request` kéréseit számolja; a letöltés mindig ugyanazt adja."""
+
+    def __init__(self, body: bytes = b"abc") -> None:
+        self.headers: dict[str, str] = {}
+        self.calls: list[str] = []
+        self.body = body
+
+    def request(self, method, url, **_):
+        self.calls.append(method)
+        r = Resp(200, {})
+        r.content = self.body
+        return r
+
+
+def test_a_futason_beluli_gyorsitotar_egyszer_tolt_le(tmp_path):
+    # J1: a job lépései ugyanazt a partíciót olvassák; a második már a lemezről jön.
+    s = SupabaseStorage("https://example.supabase.co", "fake-key-for-tests", cache_dir=tmp_path)
+    s.session = Counting()
+    assert s.download("market-data-raw", "prices/year=2026.parquet") == b"abc"
+    assert s.download("market-data-raw", "prices/year=2026.parquet") == b"abc"
+    assert s.session.calls == ["GET"]
+    assert s.traffic.downloads == 1
+    assert s.traffic.cache_hits == 1
+
+
+def test_azonos_tartalmat_nem_ir_ujra_az_eltérőt_igen(tmp_path):
+    s = SupabaseStorage("https://example.supabase.co", "fake-key-for-tests", cache_dir=tmp_path)
+    s.session = Counting()
+    s.download("market-data-raw", "p.parquet")
+    s.upload("market-data-raw", "p.parquet", b"abc", "application/octet-stream")
+    assert s.session.calls == ["GET"]  # azonos: nincs feltöltés
+    s.upload("market-data-raw", "p.parquet", b"abcd", "application/octet-stream")
+    assert s.session.calls == ["GET", "POST"]
+    assert s.traffic.uploads_skipped == 1
+    assert s.traffic.uploads == 1
+
+
+def test_gyorsitotar_nelkul_minden_letoltes_kimegy(tmp_path, monkeypatch):
+    monkeypatch.delenv("CALYZE_STORAGE_CACHE", raising=False)
+    s = SupabaseStorage("https://example.supabase.co", "fake-key-for-tests")
+    s.session = Counting()
+    s.download("b", "x")
+    s.download("b", "x")
+    assert s.session.calls == ["GET", "GET"]
+
+
+def test_az_ismetelt_letoltes_nem_irja_at_az_azonos_sort():
+    import pandas as pd
+
+    from pipeline.ingest.partitions import upsert
+
+    old = pd.DataFrame(
+        {
+            "instrument_id": ["A"],
+            "date": [pd.Timestamp("2026-11-03").date()],
+            "close": [10.0],
+            "fetched_at": ["t1"],
+        }
+    )
+    same = old.assign(fetched_at="t2")
+    assert upsert(old, same)["fetched_at"].tolist() == ["t1"]  # csak az időbélyeg más: a régi marad
+    changed = old.assign(close=10.5, fetched_at="t2")
+    out = upsert(old, changed)
+    assert out["close"].tolist() == [10.5]
+    assert out["fetched_at"].tolist() == ["t2"]

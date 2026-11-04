@@ -107,6 +107,14 @@ def run(
     mode: str, storage: Storage, now: datetime, fred_key: str | None, macro_required: bool
 ) -> dict[str, object]:
     last = last_closed_session(now)
+    # A mutatók csak a becsléshez kellenek: ha a napra már van becslés-csomag,
+    # a napi újrapróba nem tölti le újra a három év árfolyamot (J2).
+    if mode == "daily":
+        from pipeline.forecast.run import package_exists
+
+        if package_exists(storage, last):
+            log.info("features_skipped", reason="forecast_already_saved", session=str(last))
+            return {"status": "skipped", "session": str(last)}
     universe = active_on(load_universe(), now.astimezone(UTC).date())
     etf_ids = set(universe.loc[universe["ticker"].isin(CROSS_MARKET), "instrument_id"])
     actions = _read_table(storage, ACTIONS_PATH)

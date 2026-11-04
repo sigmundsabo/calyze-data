@@ -404,7 +404,10 @@ def main(argv: list[str] | None = None) -> int:
         log.error("storage_not_configured")
         return 2
 
-    print(json.dumps(run(storage, datetime.now(UTC), journal), indent=2, default=str))
+    from pipeline.runstate import gated
+
+    result = gated(storage, "resolve-equity", lambda: run(storage, datetime.now(UTC), journal))
+    print(json.dumps(result if result is not None else {"status": "skipped"}, indent=2, default=str))
     return 0
 
 

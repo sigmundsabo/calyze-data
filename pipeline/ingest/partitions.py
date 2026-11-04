@@ -83,6 +83,36 @@ def existing_years(storage: Storage, prefix: str = PRICES_PREFIX) -> list[int]:
     return sorted(years)
 
 
+#: A lekérés ideje nem tartalom: ha csak ez tér el, a tárolt sor marad.
+VOLATILE_COLUMNS = frozenset({"fetched_at"})
+
+
+def _drop_unchanged(existing: pd.DataFrame, fresh: pd.DataFrame) -> pd.DataFrame:
+    """A friss sorokból kiesik, ami a lekérés idején kívül azonos a tárolttal.
+
+    A napi újrapróbák ugyanazt a napot többször is lekérik; ha a friss sor
+    felülírná a régit, a partíció minden futásban bájtra eltérne, és a futás
+    „új adatot” látna ott, ahol nincs (`docs/terv-egress.md` a privát repóban).
+    """
+    if existing.empty or fresh.empty:
+        return fresh
+    columns = [c for c in fresh.columns if c in existing.columns and c not in VOLATILE_COLUMNS]
+    merged = fresh.merge(
+        existing[columns].drop_duplicates(["instrument_id", "date"]),
+        on=["instrument_id", "date"],
+        how="left",
+        suffixes=("", "__old"),
+        indicator=True,
+    )
+    same = merged["_merge"] == "both"
+    for c in columns:
+        if c in ("instrument_id", "date"):
+            continue
+        new, old = merged[c], merged[f"{c}__old"]
+        same &= (new == old) | (new.isna() & old.isna())
+    return fresh[~same.to_numpy()]
+
+
 def upsert(existing: pd.DataFrame, fresh: pd.DataFrame, replace_ids: Iterable[str] = ()) -> pd.DataFrame:
     """Összefésüli a meglévő és a friss sorokat.
 
@@ -92,6 +122,7 @@ def upsert(existing: pd.DataFrame, fresh: pd.DataFrame, replace_ids: Iterable[st
     """
     replace = set(replace_ids)
     keep = existing[~existing["instrument_id"].isin(replace)] if replace else existing
+    fresh = _drop_unchanged(keep, fresh)
     if not fresh.empty and not keep.empty:
         keys = pd.MultiIndex.from_frame(fresh[["instrument_id", "date"]])
         mask = ~pd.MultiIndex.from_frame(keep[["instrument_id", "date"]]).isin(keys)

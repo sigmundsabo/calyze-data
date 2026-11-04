@@ -53,6 +53,8 @@ HISTORY_SESSIONS = 250
 WORKBENCH_SESSIONS = 5 * 252 + 200
 #: Ennyi naptári évet kell betölteni a munkaasztal idősorához.
 WORKBENCH_YEARS = 7
+#: A részvényes megjelenítés feltöltési manifesztje (útvonal → sha256).
+MANIFEST_PATH = ".manifest.json"
 
 #: Ennyi napra visszamenőleg mutatjuk, hogyan változott a becslés.
 TIMELINE_SESSIONS = 90
@@ -993,10 +995,17 @@ def run(storage: Storage, now: datetime, dry_run: bool = False) -> dict[str, obj
         return {"session": str(latest_session), "instruments": written, "status": "dry_run"}
 
     storage.ensure_private_bucket(DISPLAY_BUCKET)
-    for path, blob in files:
-        storage.upload(DISPLAY_BUCKET, path, blob, "application/json")
-    for path, blob, content_type in record_files:
-        storage.upload(DISPLAY_BUCKET, path, blob, content_type)
+    from pipeline.publish.manifest import ChangedOnly
+
+    # Csak az új vagy eltérő fájl megy fel (docs: privát repó, terv-egress.md, J3).
+    uploader = ChangedOnly(storage, DISPLAY_BUCKET, MANIFEST_PATH)
+    try:
+        for path, blob in files:
+            uploader.put(path, blob, "application/json")
+        for path, blob, content_type in record_files:
+            uploader.put(path, blob, content_type)
+    finally:
+        uploader.finish()
 
     log.info("publish_done", session=str(latest_session), files=len(files), exports=len(record_files))
     return {
@@ -1025,7 +1034,18 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         storage = SupabaseStorage(settings.supabase_url or "", settings.supabase_secret_key or "")
 
-    result = run(storage, datetime.now(UTC), dry_run=args.dry_run)
+    from pipeline.runstate import gated
+
+    if args.dry_run:
+        result = run(storage, datetime.now(UTC), dry_run=True)
+    else:
+        gated_result = gated(
+            storage, "publish-equity", lambda: run(storage, datetime.now(UTC), dry_run=False)
+        )
+        if gated_result is None:
+            print(json.dumps({"status": "skipped"}))
+            return 0
+        result = gated_result
     latest = result.pop("latest", None)
     if args.local is None and not args.dry_run and isinstance(latest, dict):
         # Az értesítések piaci összefoglalója (spec/07, 6.). A felhasználókra
