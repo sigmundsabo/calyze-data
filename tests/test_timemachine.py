@@ -150,3 +150,31 @@ def test_sekely_klonban_nincs_commit_link(tmp_path: Path) -> None:
     run("clone", "-q", "--depth", "1", f"file://{source}", str(clone), cwd=tmp_path)
     assert adding_commit(clone / "m.json", clone) is None
     assert adding_commit(source / "m.json", source) is not None
+
+
+def test_a_nap_fajl_karcsu_a_becslesek_papironkent_kulon() -> None:
+    import json
+
+    from pipeline.timemachine.archive import index_entry, split_archive
+
+    frame = package_frame()
+    blob = parquet_bytes(frame)
+    manifest = manifest_for(blob, universe=620, instruments=2)
+    archive = build_archive(
+        manifest,
+        None,
+        frame,
+        pd.DataFrame({"instrument_id": ["CZ00001"], "ticker": ["AAPL"], "name": ["Apple Inc."]}),
+        datetime(2026, 9, 26, tzinfo=UTC),
+    )
+    slim, parts = split_archive(archive)
+    assert slim["split"] is True
+    assert "forecasts" not in slim["instruments"]["CZ00001"]  # type: ignore[index]
+    assert slim["instruments"]["CZ00001"]["ticker"] == "AAPL"  # type: ignore[index]
+    assert [f["horizon"] for f in parts["CZ00001"]["forecasts"]] == [5, 20, 60]  # type: ignore[index]
+    assert len(json.dumps(slim)) < len(json.dumps(archive)) / 2
+    # Az index sora a lenyomatból: ugyanaz, amit az archívumból olvastunk volna.
+    entry = index_entry("2026-09-23", manifest, None)
+    assert entry["instruments_with_forecast"] == archive["instruments_with_forecast"]
+    assert entry["partial"] == archive["partial"]
+    assert entry["sha256"] == archive["sha256"]

@@ -250,3 +250,37 @@ def test_a_mai_kivaltok_ugyanazok_mint_a_teljes_mulon() -> None:
     busiest = events["date"].value_counts().index[0]
     got = standing("CZ00009", frame[frame["date"] <= busiest].reset_index(drop=True), empty, regime, busiest)
     assert {t for t, _, _ in got} == set(events.loc[events["date"] == busiest, "trigger"])
+
+
+def test_a_csomag_szetbontva_a_tabla_csak_a_megerosito_sorokat_kapja():
+    from pipeline.confluence.run import BOARD_FILE, split_payload
+
+    payload = {
+        "generated_at": "x",
+        "horizons": [5, 20],
+        "confirmation": {"from": "2019-01-01", "to": "2026-01-01"},
+        "rows": [
+            {
+                "combo": "a",
+                "trigger": "t",
+                "contexts": [],
+                "horizon": 5,
+                "status": "confirmed",
+                "discovery": {"n": 1},
+                "confirmation": {"n": 40},
+            },
+            {
+                "combo": "b",
+                "trigger": "t",
+                "contexts": [],
+                "horizon": 20,
+                "status": "not_found",
+                "discovery": {"n": 1},
+            },
+        ],
+    }
+    parts = split_payload(payload)
+    assert [r["combo"] for r in parts[BOARD_FILE]["rows"]] == ["a"]
+    assert "discovery" not in parts[BOARD_FILE]["rows"][0]
+    assert [r["combo"] for r in parts["confluence/h5.json"]["rows"]] == ["a"]
+    assert [r["combo"] for r in parts["confluence/h20.json"]["rows"]] == ["b"]

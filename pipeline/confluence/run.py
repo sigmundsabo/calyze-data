@@ -66,6 +66,11 @@ CONFIRMATION_START = date(2019, 1, 1)
 
 RESULTS_PATH = "confluence/results.parquet"
 DISPLAY_FILE = "confluence.json"
+#: Szétbontva (`docs/terv-egress.md`, J4): a teljes fájl 1,4 MB volt, és a
+#: Bizonyíték-tábla minden látogatáskor letöltötte, pedig csak a megerősítő
+#: időszak sorai kellenek neki. A Konfluencia lap horizontonként kér.
+BOARD_FILE = "confluence/board.json"
+HORIZON_FILE = "confluence/h{horizon}.json"
 
 EVENT_COLUMNS = ["instrument_id", "date", "trigger", "direction", "mask"]
 
@@ -366,6 +371,30 @@ def display_payload(table: pd.DataFrame, events: pd.DataFrame, now: datetime) ->
     }
 
 
+def split_payload(payload: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Útvonal → csomag: a tábla szelete és horizontonként egy fájl."""
+    rows = payload.get("rows", [])
+    rows = rows if isinstance(rows, list) else []
+    head = {k: v for k, v in payload.items() if k != "rows"}
+    out: dict[str, dict[str, object]] = {
+        BOARD_FILE: {
+            "generated_at": payload.get("generated_at"),
+            "confirmation": payload.get("confirmation"),
+            "rows": [
+                {k: r[k] for k in ("combo", "trigger", "contexts", "horizon", "confirmation")}
+                for r in rows
+                if "confirmation" in r
+            ],
+        }
+    }
+    for horizon in payload.get("horizons", []):  # type: ignore[union-attr]
+        out[HORIZON_FILE.format(horizon=horizon)] = {
+            **head,
+            "rows": [r for r in rows if r["horizon"] == horizon],
+        }
+    return out
+
+
 def _plain(value: object) -> object:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return None
@@ -401,12 +430,13 @@ def run(storage: Storage, now: datetime, dry_run: bool = False) -> dict[str, obj
     buffer = io.BytesIO()
     table.to_parquet(buffer, index=False, compression="zstd")
     storage.upload(RAW_BUCKET, RESULTS_PATH, buffer.getvalue(), "application/octet-stream")
-    storage.upload(
-        DISPLAY_BUCKET,
-        DISPLAY_FILE,
-        json.dumps(display_payload(table, events, now), ensure_ascii=False, separators=(",", ":")).encode(),
-        "application/json",
-    )
+    for path, payload in split_payload(display_payload(table, events, now)).items():
+        storage.upload(
+            DISPLAY_BUCKET,
+            path,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(),
+            "application/json",
+        )
     log.info("confluence_done", **summary)
     return {**summary, "status": "saved"}
 

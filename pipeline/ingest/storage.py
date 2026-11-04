@@ -167,7 +167,11 @@ class SupabaseStorage:
             "POST",
             f"{self.base}/object/{bucket}/{path}",
             data=data,
-            headers={"Content-Type": content_type, "x-upsert": "true", "cache-control": "no-store"},
+            headers={
+                "Content-Type": content_type,
+                "x-upsert": "true",
+                "cache-control": cache_control_for(bucket),
+            },
         )
         self._check(r, f"feltöltés ({path})")
         from pipeline.runstate import record_change
@@ -187,6 +191,18 @@ class SupabaseStorage:
         )
         self._check(r, f"listázás ({prefix})")
         return [f"{prefix.rstrip('/')}/{item['name']}" for item in r.json() if item.get("id")]
+
+
+#: A megjelenítési tároló fájljait a böngésző eltárolhatja, de minden
+#: használat előtt ellenőrzi (`no-cache`): változatlan fájlra a szerver csak
+#: „304 – nem változott”-at küld, a tartalom nem jön le újra (J5, a tulajdonos
+#: döntése 2026-11-04: csak online, mindig a szerverrel egyeztetve). A nyers
+#: tároló soha nem kerül gyorsítótárba.
+DISPLAY_CACHE_CONTROL = "private, no-cache"
+
+
+def cache_control_for(bucket: str) -> str:
+    return DISPLAY_CACHE_CONTROL if bucket == "display" else "no-store"
 
 
 def _digest(data: bytes) -> str:

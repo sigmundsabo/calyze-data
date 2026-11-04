@@ -165,6 +165,41 @@ def build_archive(
     }
 
 
+def split_archive(archive: dict[str, object]) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+    """A nap-fájl papírlistával, és papíronként a becslések (`docs/terv-egress.md`, J4).
+
+    Az időgép napi nézete csak a nevet és a tickert keresi; egy papír
+    becslése csak annak megnyitásakor kell. Egyben a nap 2 MB fölött volt.
+    """
+    raw = archive.get("instruments", {})
+    instruments: dict[str, dict[str, object]] = raw if isinstance(raw, dict) else {}
+    slim = {
+        **archive,
+        "split": True,
+        "instruments": {
+            iid: {k: v for k, v in entry.items() if k != "forecasts"} for iid, entry in instruments.items()
+        },
+    }
+    parts = {iid: {"forecasts": entry.get("forecasts", [])} for iid, entry in instruments.items()}
+    return slim, parts
+
+
+def index_entry(
+    session: str, manifest: dict[str, object], commit: dict[str, str] | None
+) -> dict[str, object]:
+    """Az index sora a lenyomatból: a kint lévő archívumot nem kell hozzá letölteni."""
+    covered = int(manifest.get("instruments") or 0)  # type: ignore[call-overload]
+    universe_size = int(manifest.get("universe") or 0)  # type: ignore[call-overload]
+    return {
+        "session": session,
+        "made_at": manifest.get("made_at"),
+        "sha256": manifest.get("sha256"),
+        "commit": commit,
+        "instruments_with_forecast": covered,
+        "partial": bool(universe_size) and covered < universe_size * MIN_SESSION_COVERAGE,
+    }
+
+
 def load_manifests(root: Path = MANIFESTS) -> list[tuple[Path, dict[str, object]]]:
     items = []
     for path in sorted(root.glob("*/*.json")):
@@ -213,14 +248,14 @@ def run(
     index: list[dict[str, object]] = []
     written = kept = 0
 
+    # Ami már kint van, azt a lista mondja meg (egy kérés), nem a fájlok letöltése.
+    present = set() if rebuild else set(storage.list(DISPLAY_BUCKET, prefix))
     for path, manifest in load_manifests(manifests_root):
         session = str(manifest["session"])
         target = f"{prefix}/{session}.json"
         commit = adding_commit(path)
 
-        existing = None if rebuild else storage.download(DISPLAY_BUCKET, target)
-        if existing is not None:
-            archive = json.loads(existing)
+        if target in present:
             kept += 1
         else:
             blob = storage.download(RAW_BUCKET, path_of(date.fromisoformat(session)))
@@ -233,27 +268,28 @@ def run(
             same_day = summary_now is not None and str(summary_now.get("session")) == session
             archive["verdict_archived"] = same_day
             archive["verdict"] = summary_now.get("verdict") if same_day and summary_now else None
+            slim, parts = split_archive(archive)
             if not dry_run:
+                # Előbb a papíronkénti fájlok, utoljára a nap-fájl: ha közben
+                # elbukik, a nap még „nincs kint”, és a következő futás újraírja.
+                for iid, part in parts.items():
+                    storage.upload(
+                        DISPLAY_BUCKET,
+                        f"{prefix}/{session}/{iid}.json",
+                        json.dumps(part, ensure_ascii=False, separators=(",", ":"), default=str).encode(),
+                        "application/json",
+                    )
                 storage.upload(
                     DISPLAY_BUCKET,
                     target,
-                    json.dumps(archive, ensure_ascii=False, separators=(",", ":"), default=str).encode(),
+                    json.dumps(slim, ensure_ascii=False, separators=(",", ":"), default=str).encode(),
                     "application/json",
                 )
             written += 1
             if rebuild:
                 log.info("archive_rebuilt", session=session)
 
-        index.append(
-            {
-                "session": session,
-                "made_at": archive.get("made_at"),
-                "sha256": archive.get("sha256"),
-                "commit": archive.get("commit"),
-                "instruments_with_forecast": archive.get("instruments_with_forecast"),
-                "partial": archive.get("partial"),
-            }
-        )
+        index.append(index_entry(session, manifest, commit))
 
     index.sort(key=lambda e: str(e["session"]), reverse=True)
     if not dry_run:
