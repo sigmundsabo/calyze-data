@@ -5,7 +5,7 @@ külön blokkokban adjuk meg; mindegyiket a saját Terminálodban futtasd.
 
 ## 1. A napi futás elhasalt (e-mail a GitHubtól)
 
-1. Nyisd meg a futást: <https://github.com/szabozsigi11-arch/calyze-data/actions>
+1. Nyisd meg a futást: <https://github.com/sigmundsabo/calyze-data/actions>
 2. Nézd meg, melyik lépés piros:
    - **Letöltés:** adatforrás-hiba. Nézd meg a `provider_*` sorokat: ha
      `provider_blocked`, a forrás kitiltott minket; ha `missing`, néhány papír
@@ -16,7 +16,7 @@ külön blokkokban adjuk meg; mindegyiket a saját Terminálodban futtasd.
 3. Újraindítás:
 
 ```bash
-gh workflow run ingest.yml -R szabozsigi11-arch/calyze-data
+gh workflow run ingest.yml -R sigmundsabo/calyze-data
 ```
 
 **Fontos:** a becslés egy napra csak egyszer készül. Ha a csomag már
@@ -32,7 +32,7 @@ ki. Visszamenőleg becslést gyártani tilos.
 Hetente magától fut (vasárnap 08:00 UTC). Kézzel:
 
 ```bash
-gh workflow run train.yml -R szabozsigi11-arch/calyze-data -f task=train
+gh workflow run train.yml -R sigmundsabo/calyze-data -f task=train
 ```
 
 ## 4. A mérés újraszámolása (backtest)
@@ -40,13 +40,13 @@ gh workflow run train.yml -R szabozsigi11-arch/calyze-data -f task=train
 Órás nagyságrend, a privát tárba ír:
 
 ```bash
-gh workflow run train.yml -R szabozsigi11-arch/calyze-data -f task=backtest
+gh workflow run train.yml -R sigmundsabo/calyze-data -f task=backtest
 ```
 
 A tárolt mérés gyors kiírása (nem számol újra):
 
 ```bash
-gh workflow run train.yml -R szabozsigi11-arch/calyze-data -f task=report
+gh workflow run train.yml -R sigmundsabo/calyze-data -f task=report
 ```
 
 ## 5. „Halott ember kapcsoló” riasztás (a futás el sem indult)
@@ -59,7 +59,7 @@ gh workflow run train.yml -R szabozsigi11-arch/calyze-data -f task=report
 ## 6. Kulcs szivárgott vagy gyanús a naplóban valami
 
 1. Vond vissza és cseréld a kulcsot a szolgáltatónál.
-2. Tedd be az újat: `gh secret set <NÉV> -R szabozsigi11-arch/calyze-data`
+2. Tedd be az újat: `gh secret set <NÉV> -R sigmundsabo/calyze-data`
 3. Futtasd újra a napi futást, és nézd meg, hogy lefut-e.
 4. Nézd át, mikor óta volt kint a kulcs (a futások naplója nyilvános).
 

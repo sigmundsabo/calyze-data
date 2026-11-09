@@ -44,7 +44,7 @@ REAL_FROM_YEAR = 2003
 #: „5 YR”-nek hívja, a nominálisat „5 Yr”-nek: a kis-nagybetű nem elég jel).
 REAL_PREFIX = "Real "
 #: Azonosítható kérés: a forrás így tudja, ki kéri (nem rejtőzködünk).
-HEADERS = {"User-Agent": "Calyze research pipeline (github.com/szabozsigi11-arch/calyze-data)"}
+HEADERS = {"User-Agent": "Calyze research pipeline (github.com/sigmundsabo/calyze-data)"}
 
 
 class TreasuryError(RuntimeError):

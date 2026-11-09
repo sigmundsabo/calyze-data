@@ -54,7 +54,7 @@ FX_ARCHIVE_PREFIX = "archive-fx"
 #: A kötvény saját lenyomatai és archívuma (7. fázis).
 BONDS_MANIFESTS = REPO / "manifests-bonds"
 BONDS_ARCHIVE_PREFIX = "archive-bonds"
-PUBLIC_REPO_URL = "https://github.com/szabozsigi11-arch/calyze-data"
+PUBLIC_REPO_URL = "https://github.com/sigmundsabo/calyze-data"
 ARCHIVE_PREFIX = "archive"
 INDEX_PATH = f"{ARCHIVE_PREFIX}/index.json"
 

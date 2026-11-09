@@ -1,4 +1,4 @@
-Required Notice: Copyright (c) 2026 szabozsigi11-arch (https://github.com/szabozsigi11-arch)
+Required Notice: Copyright (c) 2026 sigmundsabo (https://github.com/sigmundsabo)
 
 # PolyForm Noncommercial License 1.0.0
 

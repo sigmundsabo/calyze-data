@@ -24,7 +24,7 @@ from pipeline.events.calendar import EVENTS
 
 log = logging_setup.get_logger(__name__)
 
-USER_AGENT = "Calyze research (github.com/szabozsigi11-arch/calyze-data)"
+USER_AGENT = "Calyze research (github.com/sigmundsabo/calyze-data)"
 FEEDS: tuple[tuple[str, str, str], ...] = (
     ("Federal Reserve", "https://www.federalreserve.gov/feeds/press_all.xml", "www.federalreserve.gov"),
     ("European Central Bank", "https://www.ecb.europa.eu/rss/press.html", "www.ecb.europa.eu"),
